@@ -24,7 +24,6 @@ WORKDIR /var/www
 
 # -----------------------------------------------------------
 # 4. Créer la structure de dossiers AVANT de copier le code
-#    (garantit qu'ils existent même si .dockerignore les filtre)
 # -----------------------------------------------------------
 RUN mkdir -p \
         storage/app/public \
@@ -32,18 +31,16 @@ RUN mkdir -p \
         storage/framework/sessions \
         storage/framework/views \
         storage/logs \
-        bootstrap/cache \
-    && chown -R www-data:www-data storage bootstrap \
-    && chmod -R 775 storage bootstrap
+        bootstrap/cache
 
 # -----------------------------------------------------------
-# 5. Copier le code applicatif
+# 5. Copier le code applicatif (en root, on ajustera après)
 # -----------------------------------------------------------
-COPY --chown=www-data:www-data . .
+COPY . .
 
 # -----------------------------------------------------------
-# 6. S'assurer à nouveau que les dossiers existent (au cas où
-#    ils seraient absents du dépôt Git)
+# 6. S'assurer à nouveau que les dossiers existent
+#    (au cas où .dockerignore les aurait filtrés)
 # -----------------------------------------------------------
 RUN mkdir -p \
         storage/app/public \
@@ -51,44 +48,47 @@ RUN mkdir -p \
         storage/framework/sessions \
         storage/framework/views \
         storage/logs \
-        bootstrap/cache \
-    && chown -R www-data:www-data storage bootstrap \
-    && chmod -R 775 storage bootstrap
+        bootstrap/cache
 
 # -----------------------------------------------------------
-# 7. Installer les dépendances PHP en tant que www-data
+# 7. Installer les dépendances PHP en root (droits sur /var/www)
 # -----------------------------------------------------------
-USER www-data
 RUN composer install \
         --no-dev \
         --no-interaction \
         --optimize-autoloader \
-        --no-scripts
+        --no-scripts \
+    && composer clear-cache
 
 # -----------------------------------------------------------
 # 8. Créer le lien storage (idempotent)
 # -----------------------------------------------------------
-USER root
 RUN php artisan storage:link || true
 
 # -----------------------------------------------------------
-# 9. Copier et préparer l'entrypoint
+# 9. Corriger les permissions : tout appartient à www-data
+# -----------------------------------------------------------
+RUN chown -R www-data:www-data /var/www \
+    && chmod -R 775 storage bootstrap/cache
+
+# -----------------------------------------------------------
+# 10. Copier et préparer l'entrypoint
 # -----------------------------------------------------------
 COPY --chown=root:root entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod +x /usr/local/bin/entrypoint.sh
 
 # -----------------------------------------------------------
-# 10. Retour à www-data pour l'exécution
+# 11. Exécution en www-data
 # -----------------------------------------------------------
 USER www-data
 
 # -----------------------------------------------------------
-# 11. Port exposé pour Render
+# 12. Port Render
 # -----------------------------------------------------------
 ENV PORT=10000
 EXPOSE 10000
 
 # -----------------------------------------------------------
-# 12. Point d'entrée
+# 13. Point d'entrée
 # -----------------------------------------------------------
 ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
