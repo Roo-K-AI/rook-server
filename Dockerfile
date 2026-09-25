@@ -1,57 +1,44 @@
-FROM php:8.4.2-fpm
+# Étape de construction
+FROM php:8.4.2-fpm AS builder
 
-# Créer le fichier sources.list avec les bons dépôts HTTPS
-RUN echo "deb https://deb.debian.org/debian bookworm main" > /etc/apt/sources.list && \
-    echo "deb https://deb.debian.org/debian-security bookworm-security main" >> /etc/apt/sources.list && \
-    echo "deb https://deb.debian.org/debian bookworm-updates main" >> /etc/apt/sources.list
+# 1. Créer les répertoires avec les bonnes permissions
+RUN mkdir -p /var/www/bootstrap/cache /var/www/storage/framework/{sessions,views,cache}
 
-# Installer et mettre à jour les certificats CA
-RUN apt-get update && \
-    apt-get install -y --no-install-recommends ca-certificates && \
-    apt-get clean && \
-    rm -rf /var/lib/apt/lists/*
-
-# Installer les dépendances
+# 2. Installer les dépendances système
 RUN apt-get update && apt-get install -y \
-    git \
-    curl \
-    libpng-dev \
-    libonig-dev \
-    libxml2-dev \
-    zip \
-    unzip \
-    libpq-dev \
+    git curl libpng-dev libonig-dev libxml2-dev libpq-dev zip unzip \
+    && docker-php-ext-install pdo pdo_pgsql mbstring exif pcntl bcmath gd \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
-# Install PHP extensions
-RUN docker-php-ext-install pdo pdo_pgsql mbstring exif pcntl bcmath gd
+# 3. Installer Composer
+COPY --from=composer:latest /usr/bin/composer /usr/local/bin/composer
 
-
-# Install Composer
-COPY --from=composer:latest /usr/bin/composer /usr/bin/composer
-
-# Create Laravel directory structure
-RUN mkdir -p /var/www/bootstrap/cache /var/www/storage/framework/{sessions,views,cache}
-
-# Set working directory
+# 4. Copier l’application
 WORKDIR /var/www
-
-# Copy composer files
-COPY composer.json composer.lock ./
-
-# Install dependencies
-RUN composer install --no-scripts --no-autoloader --no-interaction
-
-# Copy application files
 COPY . .
 
-# Set permissions (important to do this before dump-autoload)
-RUN chown -R www-data:www-data /var/www \
-    && chmod -R 775 /var/www/bootstrap/cache /var/www/storage
+# 5. Installer les dépendances PHP
+RUN composer install --no-dev --optimize-autoloader --no-interaction
 
-# Generate optimized autoload files
-RUN composer dump-autoload --optimize
+# 6. Créer le lien storage et ajuster les permissions (root)
+RUN php artisan storage:link \
+    && chown -R www-data:www-data /var/www/storage /var/www/bootstrap/cache \
+    && chmod -R 777 /var/www/storage /var/www/bootstrap/cache
 
-EXPOSE 9000
-CMD ["php-fpm"]
+# Étape finale
+FROM webdevops/php:8.2-alpine
+
+# Copier depuis le builder
+COPY --from=builder --chown=www-data:www-data /var/www /var/www
+COPY --from=builder /usr/local/bin/composer /usr/local/bin/composer
+
+# Variables d'environnement
+ENV PORT=10000
+EXPOSE $PORT
+
+# Répertoire de travail
+WORKDIR /var/www
+
+# Commande pour Render
+CMD ["sh", "-c", "php artisan optimize && php artisan serve --host=0.0.0.0 --port=${PORT}"]
