@@ -1,0 +1,13 @@
+.git/
+node_modules/
+vendor/
+storage/
+public/storage
+bootstrap/cache/
+.env
+docker-compose.override.yml
+*.md
+*.log
+*.sqlite
+.DS_Store
+.idea
