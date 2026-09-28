@@ -53,7 +53,7 @@ class ProductController extends Controller
             ]);
 
             SyncProductEnrichmentJob::dispatch($product->id)
-                ->delay(now()->addSeconds(10));
+                ->delay(now()->addSeconds(2));
 
             return response()->json([
                 'message' => 'Produit créé, enrichissement en cours',

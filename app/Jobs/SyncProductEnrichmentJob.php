@@ -76,7 +76,7 @@ class SyncProductEnrichmentJob implements ShouldQueue
 
             self::dispatch(
                 $this->productId
-            )->delay(now()->addSeconds(10));
+            )->delay(now()->addSeconds(2));
 
             return;
         }
