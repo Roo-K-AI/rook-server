@@ -1,57 +1,94 @@
-FROM php:8.4.2-fpm
+# syntax=docker/dockerfile:1
 
-# Créer le fichier sources.list avec les bons dépôts HTTPS
-RUN echo "deb https://deb.debian.org/debian bookworm main" > /etc/apt/sources.list && \
-    echo "deb https://deb.debian.org/debian-security bookworm-security main" >> /etc/apt/sources.list && \
-    echo "deb https://deb.debian.org/debian bookworm-updates main" >> /etc/apt/sources.list
+FROM php:8.4-fpm
 
-# Installer et mettre à jour les certificats CA
-RUN apt-get update && \
-    apt-get install -y --no-install-recommends ca-certificates && \
-    apt-get clean && \
-    rm -rf /var/lib/apt/lists/*
-
-# Installer les dépendances
+# -----------------------------------------------------------
+# 1. Dépendances système + extensions PHP
+# -----------------------------------------------------------
 RUN apt-get update && apt-get install -y \
-    git \
-    curl \
-    libpng-dev \
-    libonig-dev \
-    libxml2-dev \
-    zip \
-    unzip \
-    libpq-dev \
+        git curl zip unzip \
+        libpng-dev libonig-dev libxml2-dev libpq-dev \
+    && docker-php-ext-install pdo pdo_pgsql mbstring exif pcntl bcmath gd \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
-# Install PHP extensions
-RUN docker-php-ext-install pdo pdo_pgsql mbstring exif pcntl bcmath gd
+# -----------------------------------------------------------
+# 2. Composer
+# -----------------------------------------------------------
+COPY --from=composer:latest /usr/bin/composer /usr/local/bin/composer
 
-
-# Install Composer
-COPY --from=composer:latest /usr/bin/composer /usr/bin/composer
-
-# Create Laravel directory structure
-RUN mkdir -p /var/www/bootstrap/cache /var/www/storage/framework/{sessions,views,cache}
-
-# Set working directory
+# -----------------------------------------------------------
+# 3. Répertoire de travail
+# -----------------------------------------------------------
 WORKDIR /var/www
 
-# Copy composer files
-COPY composer.json composer.lock ./
+# -----------------------------------------------------------
+# 4. Créer la structure de dossiers AVANT de copier le code
+# -----------------------------------------------------------
+RUN mkdir -p \
+        storage/app/public \
+        storage/framework/cache/data \
+        storage/framework/sessions \
+        storage/framework/views \
+        storage/logs \
+        bootstrap/cache
 
-# Install dependencies
-RUN composer install --no-scripts --no-autoloader --no-interaction
-
-# Copy application files
+# -----------------------------------------------------------
+# 5. Copier le code applicatif (en root, on ajustera après)
+# -----------------------------------------------------------
 COPY . .
 
-# Set permissions (important to do this before dump-autoload)
+# -----------------------------------------------------------
+# 6. S'assurer à nouveau que les dossiers existent
+#    (au cas où .dockerignore les aurait filtrés)
+# -----------------------------------------------------------
+RUN mkdir -p \
+        storage/app/public \
+        storage/framework/cache/data \
+        storage/framework/sessions \
+        storage/framework/views \
+        storage/logs \
+        bootstrap/cache
+
+# -----------------------------------------------------------
+# 7. Installer les dépendances PHP en root (droits sur /var/www)
+# -----------------------------------------------------------
+RUN composer install \
+        --no-dev \
+        --no-interaction \
+        --optimize-autoloader \
+        --no-scripts \
+    && composer clear-cache
+
+# -----------------------------------------------------------
+# 8. Créer le lien storage (idempotent)
+# -----------------------------------------------------------
+RUN php artisan storage:link || true
+
+# -----------------------------------------------------------
+# 9. Corriger les permissions : tout appartient à www-data
+# -----------------------------------------------------------
 RUN chown -R www-data:www-data /var/www \
-    && chmod -R 775 /var/www/bootstrap/cache /var/www/storage
+    && chmod -R 775 storage bootstrap/cache
 
-# Generate optimized autoload files
-RUN composer dump-autoload --optimize
+# -----------------------------------------------------------
+# 10. Copier et préparer l'entrypoint
+# -----------------------------------------------------------
+COPY --chown=root:root entrypoint.sh /usr/local/bin/entrypoint.sh
+RUN chmod +x /usr/local/bin/entrypoint.sh
 
-EXPOSE 9000
-CMD ["php-fpm"]
+# -----------------------------------------------------------
+# 11. Exécution en www-data
+# -----------------------------------------------------------
+USER www-data
+
+# -----------------------------------------------------------
+# 12. Port Render
+# -----------------------------------------------------------
+ENV PORT=10000
+EXPOSE 10000
+
+# -----------------------------------------------------------
+# 13. Point d'entrée
+# -----------------------------------------------------------
+ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]

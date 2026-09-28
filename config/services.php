@@ -26,4 +26,6 @@ return [
         'token' => env('ROOK_PIPELINE_TOKEN'),
     ],
 
+    'queue_tick_token' => env('QUEUE_TICK_TOKEN'),
+
 ];
