@@ -31,38 +31,52 @@ class ProductController extends Controller
     ): JsonResponse {
         $dto = $request->toDto();
 
-        // 1. Création locale du produit
         $product = $this->products->create($dto);
 
-        // 2. Appel du pipeline ROOK
-        $response = $rook->createJob([
-            'schema_version' => 'product-enrichment-request.v1',
-            'product_id'     => (string) $product->id,
-            'product_name'   => $product->name,
-            'locale'         => 'fr-FR',
-        ]);
+        try {
 
-        // 3. Mise à jour du produit avec l'ID du job ROOK
-        $product->update([
-            'rook_job_id' => $response['job_id'] ?? null,
-            'rook_status' => $response['status'] ?? 'accepted',
-        ]);
+            $response = $rook->createJob([
+                'schema_version' => 'product-enrichment-request.v1',
+                'product_id'     => (string) $product->id,
+                'product_name'   => $product->name,
+                'locale'         => 'fr-FR',
+            ]);
 
-        Log::info('Dispatch SyncProductEnrichmentJob', [
-            'product_id'  => $product->id,
-            'rook_job_id' => $response['job_id'] ?? null,
-        ]);
+            $product->update([
+                'rook_job_id' => $response['job_id'] ?? null,
+                'rook_status' => $response['status'] ?? 'accepted',
+            ]);
 
-        // 4. Planification du job de synchronisation
-        SyncProductEnrichmentJob::dispatch($product->id)
-            ->delay(now()->addSeconds(10));
+            Log::info('Dispatch SyncProductEnrichmentJob', [
+                'product_id'  => $product->id,
+                'rook_job_id' => $response['job_id'] ?? null,
+            ]);
 
-        // 5. Réponse
-        return response()->json([
-            'message' => 'Produit créé, enrichissement en cours',
-            'product' => new ProductResource($product->fresh()),
-            'rook'    => $response,
-        ], 201);
+            SyncProductEnrichmentJob::dispatch($product->id)
+                ->delay(now()->addSeconds(10));
+
+            return response()->json([
+                'message' => 'Produit créé, enrichissement en cours',
+                'product' => new ProductResource($product->fresh()),
+                'rook'    => $response,
+            ], 201);
+
+        } catch (\Throwable $e) {
+
+            Log::error('Erreur création job ROOK', [
+                'product_id' => $product->id,
+                'error' => $e->getMessage(),
+            ]);
+
+            $product->update([
+                'rook_status' => 'pending',
+            ]);
+
+            return response()->json([
+                'message' => 'Produit créé. Le pipeline ROOK est en attente.',
+                'product' => new ProductResource($product->fresh()),
+            ], 201);
+        }
     }
 
     public function show(Product $product): ProductResource
@@ -70,10 +84,16 @@ class ProductController extends Controller
         return new ProductResource($product);
     }
 
-    public function update(UpdateProductRequest $request, Product $product): ProductResource
-    {
+    public function update(
+        UpdateProductRequest $request,
+        Product $product
+    ): ProductResource {
         $dto = $request->toDto($product);
-        $updated = $this->products->update($product->id, $dto);
+
+        $updated = $this->products->update(
+            $product->id,
+            $dto
+        );
 
         return new ProductResource($updated);
     }
@@ -82,6 +102,8 @@ class ProductController extends Controller
     {
         $this->products->delete($product->id);
 
-        return response()->json(['message' => 'Produit supprimé']);
+        return response()->json([
+            'message' => 'Produit supprimé'
+        ]);
     }
 }

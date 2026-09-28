@@ -41,14 +41,28 @@ class RookPipelineClient
 
     public function createJob(array $payload): array
     {
-        $response = Http::withHeaders([
+        try {
+            Http::timeout(15)
+                ->get("{$this->baseUrl}/health");
+        } catch (\Throwable $e) {
+            sleep(5);
+        }   
+
+        $response = Http::retry(
+            3,
+            5000
+        )
+        ->withHeaders([
             'Authorization'     => 'Bearer ' . $this->token,
             'X-Correlation-Id'  => uniqid('rook-', true),
             'Idempotency-Key'   => uniqid('job-', true),
             'Accept'            => 'application/json',
         ])
-            ->timeout(30)
-            ->post("{$this->baseUrl}/internal/v1/product-enrichments", $payload);
+        ->timeout(60)
+        ->post(
+            "{$this->baseUrl}/internal/v1/product-enrichments",
+            $payload
+        );
 
         return $this->decodeJson(
             $response,
